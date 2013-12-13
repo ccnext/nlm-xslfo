@@ -1,0 +1,58 @@
+#! /bin/bash
+# Article to process
+SINGLE=`basename "$1" .zip`
+
+XML_CATALOG=/var/local/scripts/production/xslfo2/publishing/catalog-v3.xml
+#XML_DIR=$1
+XML_DIR=/var/local/scripts/production/xslfo2/xml
+#XSL is expecting a downloads directory in this particular location
+GRAPHICS_DIR=/var/local/scripts/production/xslfo2/downloads
+#FO_DIR=$1
+FO_DIR=/var/local/scripts/production/xslfo2/fo
+#new
+SIZER_DIR=/var/local/scripts/production/xslfo2/sizer
+#new
+AT_DIR=/var/local/scripts/production/xslfo2/at
+PDF_DIR=/var/local/scripts/production/xslfo2/pdf
+XSL_DIR=/var/local/scripts/production/xslfo2/xsl
+#SAXON_JAR=/home/jharney/saxon9he.jar
+SAXON_JAR=/var/local/scripts/production/xslfo2/saxon9he.jar
+RESOLVER_JAR=/var/local/scripts/production/xslfo2/resolver.jar
+AHF=/usr/AHFormatterV61_64/run.sh
+IDENTIFY=identify
+
+#get stuff that we need
+unzip -o $1 $SINGLE.xml -d $XML_DIR
+#remove any tifs that would match the unzip  from the working directory
+rm $SINGLE.g*tif
+#extract the graphic tifs from 
+unzip -o $1 $SINGLE.g*tif -d $GRAPHICS_DIR
+
+ls $GRAPHICS_DIR | xargs -i mv $GRAPHICS_DIR/{} $GRAPHICS_DIR/journal.{}
+
+if test "x$PAGE_WIDE" = "x"; then
+  PAGE_WIDE=_
+fi  
+
+if [ "$PAGE_WIDE" == "ALL" ]; then
+        echo "Forcing pagewidth figures ..."
+	PAGE_WIDE=$(grep -oE ' id="p[a-z]{3,3}-0[0-9]{6,6}-[gt][0-9]{3,3}' $XML_DIR/$SINGLE.xml | sed 's/ id="//g' | sed 's/$/,/g' | tr -d '\012\015')
+fi
+
+for FILE in $GRAPHICS_DIR/journal.$SINGLE*.tif ; do
+  $IDENTIFY -format %w:%h:%x:%y $FILE > $GRAPHICS_DIR/`basename $FILE .tif`.identify
+done
+
+java -cp $SAXON_JAR:$RESOLVER_JAR net.sf.saxon.Transform -catalog:$XML_CATALOG $XML_DIR/$SINGLE.xml $XSL_DIR/table-sizer.xsl > $SIZER_DIR/$SINGLE-sizer.fo 
+$AHF -x 3 -p @AreaTree -o $SIZER_DIR/$SINGLE-sizer.AT.xml -d $SIZER_DIR/$SINGLE-sizer.fo 2>&1
+#java -cp $SAXON_JAR:$RESOLVER_JAR net.sf.saxon.Transform -catalog:$XML_CATALOG $XML_DIR/$SINGLE.xml $XSL_DIR/size-chooser.xsl > $FO_DIR/$SINGLE.fo area-tree=$FO_DIR/$SINGLE-sizer.AT.xml page-wide=$PAGE_WIDE page-high=$PAGE_HIGH
+#$AHF -x 3 -peb 1 -picc 1 -o $PDF_DIR/$SINGLE.pdf -d $FO_DIR/$SINGLE.fo 2>&1 
+java -cp $SAXON_JAR:$RESOLVER_JAR net.sf.saxon.Transform -catalog:$XML_CATALOG $XML_DIR/$SINGLE.xml $XSL_DIR/size-chooser.xsl page-wide=$PAGE_WIDE page-high=$PAGE_HIGH area-tree=$SIZER_DIR/$SINGLE-sizer.AT.xml > $FO_DIR/$SINGLE.fo 
+$AHF -x 3 -p @AreaTree -o $AT_DIR/$SINGLE.AT.xml -d $FO_DIR/$SINGLE.fo 
+java -cp $SAXON_JAR:$RESOLVER_JAR net.sf.saxon.Transform -catalog:$XML_CATALOG $XML_DIR/$SINGLE.xml $XSL_DIR/splitter.xsl page-wide=$PAGE_WIDE page-high=$PAGE_HIGH area-tree=$SIZER_DIR/$SINGLE-sizer.AT.xml fo-area-tree=$AT_DIR/$SINGLE.AT.xml > $FO_DIR/$SINGLE.fo 
+$AHF -x 3 -peb 1 -picc 1 -o $PDF_DIR/$SINGLE.pdf -d $FO_DIR/$SINGLE.fo 
+
+# hack to remove any cruft
+rm $GRAPHICS_DIR/journal.journal*
+rm $GRAPHICS_DIR/journal.$SINGLE* $XML_DIR/$SINGLE* $FO_DIR/$SINGLE*
+zip -j $1 $PDF_DIR/$SINGLE.pdf
